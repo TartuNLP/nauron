@@ -76,7 +76,6 @@ class Sauron(Resource):
 
     def post(self):
         self.request = self.conf.parser.parse_args().copy()
-        print(self.request)
         self.resolve_nazgul()
 
         self.pre_process()

@@ -31,7 +31,7 @@ class SauronConf(ABC):
 @dataclass
 class MQSauronConf(SauronConf):
     nazguls: Dict[str, str]
-    connection_parameters: pika.connection.Parameters
+    connection_parameters: pika.connection.ConnectionParameters
     exchange_name: str
     max_priority: int = 10
     max_length: int = 20000
