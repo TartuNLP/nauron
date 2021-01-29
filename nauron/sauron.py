@@ -1,132 +1,91 @@
 import logging
-import math
-from abc import abstractmethod
-from typing import Dict, Any, List, Union
 
-from flask_restful import Resource, abort
+from flask.views import MethodView
+from flask import abort, request
 
-from nauron import Response, LocalSauronConf, MQSauronConf
-from nauron.mq_producer import MQProducer, MQMultiProducer
+from webargs import fields
+from webargs.flaskparser import use_args
+
+from nauron import ServiceConf
+from nauron.mq_producer import MQProducer
 
 LOGGER = logging.getLogger(__name__)
 
 
-class Sauron(Resource):
-    def __init__(self, conf: Union[LocalSauronConf, MQSauronConf]):
-        # Initiate RabbitMQ connection:
+HEADERS = {
+    "x-api-key": fields.Str(missing="public"),
+    "application": fields.Str(missing=None)
+}
+
+
+class Sauron(MethodView):
+    """
+    A MethodView that sends requests to the relevant worker directly or via RabbitMQ.
+    """
+    def __init__(self, conf: ServiceConf):
         self.conf = conf
-        if isinstance(self.conf, LocalSauronConf):
-            self.process = self.local_process
+        if self.conf.mq_connection_params:
+            self.process = self._mq_process
         else:
-            self.process = self.mq_process
+            self.process = self._local_process
 
-        self.add_arguments()
+        self.request = {}
 
-        self.request = None
         self.nazgul = None
         self.response = None
 
-    def add_arguments(self):
+    def _resolve_nazgul(self, headers):
         """
-        Add service-specific arguments to the parser and return it.
-        """
-        self.conf.parser.add_argument('text', type=str, required=True, help='No text provided', location='json')
-
-    def resolve_nazgul(self):
-        """
-        Resolves Nazgul instance or RabbitMQ queue name based on the "token" field in request header.
+        Resolves Nazgul instance or its configuration based on the api key in request header.
         """
         try:
-            self.nazgul = self.conf.nazguls[self.request['token']]
-            self.request.pop('token')
+            self.nazgul = self.conf.nazguls[headers['x-api-key']]
         except KeyError:
-            abort(401, message="Invalid authentication token.")
+            abort(401, description="Invalid authentication token.")
 
-    def pre_process(self):
+    def _mq_process(self):
         """
-        Define any pre-processing steps to validate and modify the request if needed before forwarding it to Nazgul.
-        By default, the request is sent as is.
+        Combines the routing key for the requests and forwards it to an MQProducer.
         """
-        pass
+        routing_key = '{}.{}'.format(self.conf.name, self.nazgul.name)
+        for key in self.nazgul.routing_pattern:
+            try:
+                routing_key+= '.{}'.format(self.request['body'][key])
+            except KeyError:
+                abort(400, description='Mandatory parameter {} missing'.format(key))
 
-    def calculate_priority(self) -> int:
+        producer = MQProducer(self.conf.mq_connection_params, self.conf.name)
+        self.response = producer.publish_request(self.request,
+                                                 routing_key=routing_key,
+                                                 message_timeout=self.conf.timeout)
+
+    def _local_process(self):
         """
-        Calculate the priority of the request which will determine how requests are prioritized by Nazgul when using
-        RabbitMQ.
+        Forwards the request to a Nazgul instance.
         """
-        length = len(self.request['text'])
-        priority = int(math.ceil((self.conf.max_length - length + 1) / (self.conf.max_length / self.conf.max_priority)))
-        if priority <= 0:
-            abort(413, message="The text is too long ({} characters).".format(length))
-        return priority
+        self.response = self.nazgul.process_request(self.request['body'], self.request['application'])
 
-    def mq_process(self):
-        priority = self.calculate_priority()
-        producer = MQProducer(self.conf.connection_parameters, self.conf.exchange_name)
-        self.response = producer.publish_request(self.request, queue_name=self.nazgul, priority=priority)
-
-    def local_process(self):
-        self.response = self.nazgul.process_request(self.request)
-
-    def post_process(self):
+    @use_args(HEADERS, location="headers")
+    def post(self, headers):
         """
-        Define any post-processing steps to modify the response from Nazgul before returning it to the end user.
+        Processes the POST request locally or via RabbitMQ.
         """
-        pass
+        self._resolve_nazgul(headers)
+        self.request['body'] = request.get_json()
+        self.request['application'] = headers['application']
 
-    def post(self):
-        self.request = self.conf.parser.parse_args().copy()
-        self.resolve_nazgul()
-
-        self.pre_process()
         self.process()
-        self.post_process()
 
         return self.response.rest_response()
 
-
-class MultirequestSauron(Sauron):
-    @abstractmethod
-    def pre_process(self) -> List[Dict[str, Any]]:
+    @use_args(HEADERS, location="headers")
+    def get(self, headers):
         """
-        Define any pre-processing steps to validate the request if needed and split it into subrequests,
-        before forwarding these to Nazgul.
+        Returns a static GET request response if defined in Nazgul configuration.
+        TODO currently not compatible with local deployment.
         """
-        pass
-
-    def calculate_priority(self) -> int:
-        """
-        Calculate the priority of the requests which will determine how requests are prioritized by Nazgul when using
-        RabbitMQ. By default, priority is depends on the number of subrequests.
-        """
-        length = len(self.request)
-        priority = int(math.ceil((self.conf.max_length - length + 1) / (self.conf.max_length / self.conf.max_priority)))
-        if priority <= 0:
-            abort(413, message="The request is too long ({} elements).".format(length))
-        return priority
-
-    def mq_process(self):
-        priority = self.calculate_priority()
-        producer = MQMultiProducer(self.conf.connection_parameters, self.conf.exchange_name)
-        self.response = producer.publish_request(self.request, queue_name=self.nazgul, priority=priority)
-
-    def local_process(self):
-        self.response = self.nazgul.process_requests(self.request)
-
-    @abstractmethod
-    def post_process(self) -> Response:
-        """
-        Define any post-processing steps to modify the responses from Nazgul and merge them into a single request
-        which will be returned to the end user.
-        """
-        pass
-
-    def post(self):
-        self.request = self.conf.parser.parse_args().copy()
-        self.resolve_nazgul()
-
-        self.request = self.pre_process()
-        self.process()
-
-        self.response = self.post_process()
-        self.response.rest_response()
+        self._resolve_nazgul(headers)
+        if self.nazgul.config_info:
+            return self.nazgul.config_info
+        else:
+            abort(405)
