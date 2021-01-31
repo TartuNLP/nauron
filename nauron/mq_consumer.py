@@ -28,23 +28,24 @@ class MQItem:
 class MQConsumer:
     def __init__(self, nazgul: Nazgul,
                  connection_parameters: pika.connection.ConnectionParameters, exchange_name: str,
-                 nazgul_name: str = "public",
+                 queue_name: str = "public",
                  alt_routes: Tuple[str] = ()):
         """
         Initializes a RabbitMQ consumer class that listens for requests for a specific Nazgul instance and responds to
         them.
         :param nazgul: A Nazgul instance to be used.
         :param connection_parameters: RabbitMQ host and user parameters.
-        :param exchange_name: the name used in the ServiceConf instance in the API implementation.
-        :param nazgul_name: the name used in NazgulConf defined in the API implementation, or if dynamic routing keys
-        are used, their allowed values should be included (separated with dots), for example 'public.et.en'
+        :param exchange_name: RabbitMQ exchange name. Should be identical to the service name in ServiceConf.
+        :param queue_name: RabbitMQ queue name and routing key. Should be the name in NazgulConf with allowed routing key
+        values separated with dots (if dynamic routing is allowed). For example 'public.et.en'. The actual queue name
+        will also automatically include the service name to ensure that unique queues names are used.
         :param alt_routes: alternative allowed routing keys to be used in case of dynamic routing, for example in
         addition to 'public.et.en', 'public.est.eng' might be allowed if routing is based on language codes.
         """
         self.nazgul = nazgul
 
         self.exchange_name = exchange_name
-        self.queue_name = '{}.{}'.format(exchange_name, nazgul_name)
+        self.queue_name = '{}.{}'.format(exchange_name, queue_name)
         self.alt_routes = ['{}.{}'.format(exchange_name, alt_route) for alt_route in alt_routes]
         self.connection_parameters = connection_parameters
         self.channel = None
