@@ -3,7 +3,7 @@ from flask_cors import CORS
 import pika
 import logging
 
-from nauron import Sauron, ServiceConf, NazgulConf
+from nauron import Endpoint, ServiceConf, EngineConf
 
 # Define Flask application
 app = Flask(__name__)
@@ -20,10 +20,10 @@ mq_parameters = pika.ConnectionParameters(host='localhost',
 service_conf = ServiceConf(name='randomservice',
                            endpoint='/api/randomservice',
                            mq_connection_params=mq_parameters,
-                           nazguls={'public':NazgulConf()})
+                           engines={'public':EngineConf()})
 
 # Define API endpoints
-app.add_url_rule(service_conf.endpoint, view_func=Sauron.as_view(service_conf.name, service_conf))
+app.add_url_rule(service_conf.endpoint, view_func=Endpoint.as_view(service_conf.name, service_conf))
 
 
 if __name__ == '__main__':

@@ -8,7 +8,7 @@ from nauron.response import Response
 LOGGER = logging.getLogger(__name__)
 
 
-class Nazgul(ABC):
+class Service(ABC):
     """
     An abstract service logic class that responds to Sauron requests directly or via RabbitMQ.
     """

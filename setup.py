@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="nauron",
-    version="1.0.0",
+    version="1.1.0",
     author="University of Tartu",
     author_email="ping@tartunlp.ai",
     description="Python library for deploying scalable NLP web services.",

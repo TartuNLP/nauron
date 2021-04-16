@@ -8,7 +8,7 @@ from typing import Optional, Any, Dict, Tuple
 import pika
 import pika.exceptions
 
-from nauron import Nazgul
+from nauron import Service
 from nauron.response import Response
 
 LOGGER = logging.getLogger(__name__)
@@ -26,23 +26,23 @@ class MQItem:
 
 
 class MQConsumer:
-    def __init__(self, nazgul: Nazgul,
+    def __init__(self, service: Service,
                  connection_parameters: pika.connection.ConnectionParameters, exchange_name: str,
                  queue_name: str = "public",
                  alt_routes: Tuple[str] = ()):
         """
-        Initializes a RabbitMQ consumer class that listens for requests for a specific Nazgul instance and responds to
+        Initializes a RabbitMQ consumer class that listens for requests for a specific engine and responds to
         them.
-        :param nazgul: A Nazgul instance to be used.
+        :param service: A nauron service instance to be used.
         :param connection_parameters: RabbitMQ host and user parameters.
         :param exchange_name: RabbitMQ exchange name. Should be identical to the service name in ServiceConf.
-        :param queue_name: RabbitMQ queue name and routing key. Should be the name in NazgulConf with allowed routing key
+        :param queue_name: RabbitMQ queue name and routing key. Should be the name in EngineConf with allowed routing key
         values separated with dots (if dynamic routing is allowed). For example 'public.et.en'. The actual queue name
         will also automatically include the service name to ensure that unique queues names are used.
         :param alt_routes: alternative allowed routing keys to be used in case of dynamic routing, for example in
         addition to 'public.et.en', 'public.est.eng' might be allowed if routing is based on language codes.
         """
-        self.nazgul = nazgul
+        self.service = service
 
         self.exchange_name = exchange_name
         self.queue_name = '{}.{}'.format(exchange_name, queue_name)
@@ -72,7 +72,7 @@ class MQConsumer:
 
     def _connect(self):
         """
-        Connects to RabbitMQ, (re)declares the service exchange and a queue for the Nazgul configuration binding
+        Connects to RabbitMQ, (re)declares the service exchange and a queue for the engine configuration binding
         any alternative routing keys as needed.
         """
         LOGGER.info('Connecting to RabbitMQ server {}:{}.'.format(self.connection_parameters.host,
@@ -111,10 +111,10 @@ class MQConsumer:
                          properties.correlation_id,
                          json.loads(body))
 
-        LOGGER.debug(f"Request: {mq_item.request}")
-        response = self.nazgul.process_request(mq_item.request['body'], mq_item.request['application'])
-        LOGGER.debug(f"Response: {response}")
+        LOGGER.debug(f"Received request: {{id: {mq_item.correlation_id}, application: "
+                     f"{mq_item.request['application']}}}")
+        response = self.service.process_request(mq_item.request['body'], mq_item.request['application'])
         self._respond(channel, mq_item, response)
         t4 = time()
 
-        LOGGER.debug(f"On_request took: {round(t4 - t1, 3)} s. ")
+        LOGGER.debug(f"Request {mq_item.correlation_id} processed in: {round(t4 - t1, 3)} s. ")

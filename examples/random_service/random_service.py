@@ -5,18 +5,18 @@ from random import randint
 import pika
 from marshmallow import Schema, fields, ValidationError
 
-from nauron import Response, Nazgul, MQConsumer
+from nauron import Response, Service, MQConsumer
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("pika").setLevel(level=logging.WARNING)
 
-logger = logging.getLogger('mynazgul')
+logger = logging.getLogger('my_service')
 
 class RandomSchema(Schema):
     """The required schema for this imaginary service."""
     text = fields.Raw(validate=(lambda obj: type(obj) in [str, list]))
 
-class RandomNazgul(Nazgul):
+class RandomService(Service):
     def __init__(self, request_schema: Schema() = RandomSchema):
         self.schema = request_schema
         logger.info("Loading imaginary model...")
@@ -44,7 +44,7 @@ if __name__ == "__main__":
                                               credentials=pika.credentials.PlainCredentials(username='guest',
                                                                                             password='guest'))
 
-    service = MQConsumer(nazgul=RandomNazgul(RandomSchema),
+    service = MQConsumer(service=RandomService(RandomSchema),
                          connection_parameters=mq_parameters,
                          exchange_name='randomservice')
     service.start()
