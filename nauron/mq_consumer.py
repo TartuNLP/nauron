@@ -1,15 +1,16 @@
 import json
 import logging
+from sys import getsizeof
 from time import time, sleep
 
 from dataclasses import dataclass
-from typing import Optional, Any, Dict, Tuple
+from typing import Tuple, Optional, Dict
 
 import pika
 import pika.exceptions
 
-from nauron import Service
-from nauron.response import Response
+from nauron import Worker
+from nauron.helpers import Response, SIZE_WARNING_THRESHOLD, SIZE_ERROR_THRESHOLD
 
 LOGGER = logging.getLogger(__name__)
 
@@ -22,30 +23,29 @@ class MQItem:
     delivery_tag: Optional[int]
     reply_to: Optional[str]
     correlation_id: Optional[str]
-    request: Dict[str, Any]
+    request: Dict
 
 
 class MQConsumer:
-    def __init__(self, service: Service,
+    def __init__(self, worker: Worker,
                  connection_parameters: pika.connection.ConnectionParameters, exchange_name: str,
-                 queue_name: str = "public",
+                 routing_key: str = "default",
                  alt_routes: Tuple[str] = ()):
         """
-        Initializes a RabbitMQ consumer class that listens for requests for a specific engine and responds to
+        Initializes a RabbitMQ consumer class that listens for requests for a specific worker and responds to
         them.
-        :param service: A nauron service instance to be used.
-        :param connection_parameters: RabbitMQ host and user parameters.
-        :param exchange_name: RabbitMQ exchange name. Should be identical to the service name in ServiceConf.
-        :param queue_name: RabbitMQ queue name and routing key. Should be the name in EngineConf with allowed routing key
-        values separated with dots (if dynamic routing is allowed). For example 'public.et.en'. The actual queue name
-        will also automatically include the service name to ensure that unique queues names are used.
-        :param alt_routes: alternative allowed routing keys to be used in case of dynamic routing, for example in
-        addition to 'public.et.en', 'public.est.eng' might be allowed if routing is based on language codes.
+
+        :param worker: A worker instance to be used.
+        :param connection_parameters: RabbitMQ connection_parameters parameters.
+        :param exchange_name: RabbitMQ exchange name.
+        :param routing_key: RabbitMQ routing key. The actual queue name will also automatically include the service
+        name to ensure that unique queues names are used.
+        :param alt_routes: alternative allowed routing keys to be used in case of dynamic routing.
         """
-        self.service = service
+        self.worker = worker
 
         self.exchange_name = exchange_name
-        self.queue_name = '{}.{}'.format(exchange_name, queue_name)
+        self.queue_name = '{}.{}'.format(exchange_name, routing_key)
         self.alt_routes = ['{}.{}'.format(exchange_name, alt_route) for alt_route in alt_routes]
         self.connection_parameters = connection_parameters
         self.channel = None
@@ -62,21 +62,20 @@ class MQConsumer:
                 self.channel.start_consuming()
             except pika.exceptions.AMQPConnectionError as e:
                 LOGGER.error(e)
-                LOGGER.info('Trying to reconnect in 30 seconds.')
-                sleep(30)
+                LOGGER.info('Trying to reconnect in 10 seconds.')
+                sleep(10)
             except KeyboardInterrupt:
                 LOGGER.info('Interrupted by user. Exiting...')
                 self.channel.close()
                 break
 
-
     def _connect(self):
         """
-        Connects to RabbitMQ, (re)declares the service exchange and a queue for the engine configuration binding
+        Connects to RabbitMQ, (re)declares the exchange for the service and a queue for the worker binding
         any alternative routing keys as needed.
         """
-        LOGGER.info('Connecting to RabbitMQ server {}:{}.'.format(self.connection_parameters.host,
-                                                                  self.connection_parameters.port))
+        LOGGER.info(f'Connecting to RabbitMQ server: {{host: {self.connection_parameters.host}, '
+                    f'port :{self.connection_parameters.port}}}')
         connection = pika.BlockingConnection(self.connection_parameters)
         self.channel = connection.channel()
         self.channel.queue_declare(queue=self.queue_name)
@@ -85,19 +84,18 @@ class MQConsumer:
         for alt_route in self.alt_routes:
             self.channel.queue_bind(exchange=self.exchange_name, queue=self.queue_name, routing_key=alt_route)
 
-        # Start listening on channel with prefetch_count=1
         self.channel.basic_qos(prefetch_count=1)
         self.channel.basic_consume(queue=self.queue_name, on_message_callback=self._on_request)
 
     @staticmethod
-    def _respond(channel: pika.adapters.blocking_connection.BlockingChannel, mq_item: MQItem, response: Response):
+    def _respond(channel: pika.adapters.blocking_connection.BlockingChannel, mq_item: MQItem, response: bytes):
         """
         Publish the response to the callback queue and acknowlesge the original queue item.
         """
         channel.basic_publish(exchange='',
                               routing_key=mq_item.reply_to,
                               properties=pika.BasicProperties(correlation_id=mq_item.correlation_id),
-                              body=response.encode())
+                              body=response)
         channel.basic_ack(delivery_tag=mq_item.delivery_tag)
 
     def _on_request(self, channel: pika.adapters.blocking_connection.BlockingChannel, method: pika.spec.Basic.Deliver,
@@ -110,11 +108,24 @@ class MQConsumer:
                          properties.reply_to,
                          properties.correlation_id,
                          json.loads(body))
+        LOGGER.info(f"Received request: {{id: {mq_item.correlation_id}, size: {getsizeof(body)} bytes}}")
+        try:
+            response = self.worker.process_request(mq_item.request['content'], mq_item.request['signature']).encode()
+        except Exception as e:
+            LOGGER.error(e)
+            response = Response(http_status_code=500).encode()
 
-        LOGGER.debug(f"Received request: {{id: {mq_item.correlation_id}, application: "
-                     f"{mq_item.request['application']}}}")
-        response = self.service.process_request(mq_item.request['body'], mq_item.request['application'])
+        respose_size = getsizeof(response)
+        if respose_size > 1024 * 1024 * SIZE_WARNING_THRESHOLD:
+            LOGGER.warning(f"Response size exceeds the recommended threshold: {{id: {mq_item.correlation_id},"
+                           f"size: {respose_size}}}")
+        if respose_size > 1024 * 1024 * SIZE_ERROR_THRESHOLD:
+            LOGGER.error(f"Response size exceeds RabbitMQ message size threshold: {{id: {mq_item.correlation_id},"
+                           f"size: {respose_size}}}")
+            response = Response(http_status_code=413).encode()
+
         self._respond(channel, mq_item, response)
-        t4 = time()
+        t2 = time()
 
-        LOGGER.debug(f"Request {mq_item.correlation_id} processed in: {round(t4 - t1, 3)} s. ")
+        LOGGER.info(f"Request processed: {{id: {mq_item.correlation_id}, duration: {round(t2 - t1, 3)} s, "
+                    f"size: {respose_size} bytes}}")

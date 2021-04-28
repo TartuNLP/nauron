@@ -10,10 +10,15 @@ from flask import jsonify, abort
 
 LOGGER = logging.getLogger(__name__)
 
+SIZE_WARNING_THRESHOLD = 64
+SIZE_ERROR_THRESHOLD = 128
 
 @dataclass
 class Response:
-    content: Optional[Union[bytes, str, Dict]]
+    """
+    A dataclass that can be used to store HTTP responses and transfer it over the message queue if needed.
+    """
+    content: Optional[Union[bytes, str, Dict]] = None
     http_status_code: int = 200
     mimetype: str = 'application/json'
 
@@ -22,7 +27,10 @@ class Response:
             self.content = self.content.decode('ISO-8859-1')
         return json.dumps(asdict(self)).encode("utf8")
 
-    def rest_response(self):
+    def flask_response(self):
+        """
+        Returns a Flask-friendly response or aborts the request if needed.
+        """
         if self.http_status_code != 200:
             if self.content is None:
                 abort(status=self.http_status_code)

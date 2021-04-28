@@ -5,10 +5,10 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="nauron",
-    version="1.1.0",
+    version="1.2.0",
     author="University of Tartu",
     author_email="ping@tartunlp.ai",
-    description="Python library for deploying scalable NLP web services.",
+    description="A Python library creating distributed and scalable web services.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/TartuNLP/nauron",
@@ -25,7 +25,6 @@ setuptools.setup(
         'pika>=1.1.0',
         'flask>=1.1.2',
         'flask-cors>=3.0.9',
-        'dataclasses>=0.7; python_version < "3.7.0"',
-        'webargs>=7.0.1',
+        'dataclasses>=0.7; python_version < "3.7.0"'
     ]
 )
