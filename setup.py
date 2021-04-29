@@ -12,7 +12,7 @@ setuptools.setup(
     version=version['__version__'],
     author="University of Tartu",
     author_email="ping@tartunlp.ai",
-    description="A Python library creating distributed and scalable web services.",
+    description="A Python library for creating distributed and scalable web services.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/TartuNLP/nauron",
