@@ -3,9 +3,13 @@ import setuptools
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
+version = {}
+with open("nauron/__version__.py") as fp:
+    exec(fp.read(), version)
+
 setuptools.setup(
     name="nauron",
-    version="1.2.0",
+    version=version['__version__'],
     author="University of Tartu",
     author_email="ping@tartunlp.ai",
     description="A Python library creating distributed and scalable web services.",
