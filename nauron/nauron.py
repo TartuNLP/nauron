@@ -142,7 +142,7 @@ class Nauron(Flask):
         """
         Process request by its service name. Equivalent of Worker.process_request(*args, **kwargs).
         """
-        self._services[service_name].process_request(*args, **kwargs)
+        return self._services[service_name].process_request(*args, **kwargs)
 
     def _route(self, method: str, rule, **options):
         def decorator(view_func):

@@ -3,7 +3,7 @@ from flask_cors import CORS
 
 from nauron import Nauron
 
-from sample_service.sample_service import SampleWorker
+from sample_worker import SampleWorker
 
 # Define application
 app = Nauron(__name__)
